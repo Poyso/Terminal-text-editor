@@ -1,6 +1,6 @@
 #include <asm-generic/errno-base.h>
 #include <asm-generic/ioctls.h>
-#include <ctype.h>
+// #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,16 +9,23 @@
 #include <termios.h>
 #include <unistd.h>
 
-// TODO: Move the cursor
+// STEP 58
 
 #define KILO_VERSION "0.0.1"
 #define CTRL_KEY(k) ((k) & 0x1f)
+
+typedef struct erow {
+    int size;
+    char *chars;
+} erow;
 
 typedef struct editorConfig {
     int cursorX, cursorY;
     int screenRows;
     int screenColumns;
     struct termios orig_termios;
+    int numrows;
+    erow row;
 } editorConfig;
 
 typedef struct abuf {
@@ -28,11 +35,14 @@ typedef struct abuf {
 
 enum editorKey {
     ARROW_LEFT = 1000,
-    ARROW_RIGHT = 1001,
-    ARROW_UP = 1002,
-    ARROW_DOWN = 1003,
-    PAGE_UP = 1004,
-    PAGE_DOWN = 1005,
+    ARROW_RIGHT,
+    ARROW_UP,
+    ARROW_DOWN,
+    DEL,
+    HOME,
+    END,
+    PAGE_UP,
+    PAGE_DOWN,
 };
 
 #define ABUF_INIT {NULL, 0}
@@ -52,10 +62,12 @@ int getCursorPosition(int *rows, int *columns);
 void abAppend(abuf *buffer, const char *string, int len);
 void abFree(abuf *buffer);
 void editorMoveCursor(int key);
+void editorOpen();
 
 int main() {
     enableRawMode();
     initEditor();
+    editorOpen();
 
     while (1) {
         editorRefreshScreen();
@@ -114,10 +126,20 @@ int editorKeyRead() {
                     return '\x1b';
             if (seq[2] == '~')
                 switch (seq[1]) {
-                case 5:
+                case '1':
+                    return HOME;
+                case '3':
+                    return DEL;
+                case '4':
+                    return END;
+                case '5':
                     return PAGE_UP;
-                case 6:
+                case '6':
                     return PAGE_DOWN;
+                case '7':
+                    return HOME;
+                case '8':
+                    return END;
                 }
             else {
                 switch (seq[1]) {
@@ -129,7 +151,18 @@ int editorKeyRead() {
                     return ARROW_RIGHT;
                 case 'D':
                     return ARROW_LEFT;
+                case 'H':
+                    return HOME;
+                case 'F':
+                    return END;
                 }
+            }
+        } else if (seq[0] == 'O') {
+            switch (seq[1]) {
+            case 'H':
+                return HOME;
+            case 'F':
+                return END;
             }
         }
         return '\x1b';
@@ -145,6 +178,12 @@ void editorProcessKeyPress() {
         write(STDOUT_FILENO, "\x1b[2J", 4);
         write(STDOUT_FILENO, "\x1b[H", 3);
         exit(0);
+        break;
+    case END:
+        E.cursorX = E.screenColumns - 1;
+        break;
+    case HOME:
+        E.cursorX = 0;
         break;
     case PAGE_UP:
     case PAGE_DOWN: {
@@ -162,6 +201,20 @@ void editorProcessKeyPress() {
     }
 }
 
+void editorOpen(char *filename) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp)
+        die("fopen");
+    char *line = NULL;
+    ssize_t linecap = 0;
+    ssize_t linelen;
+    E.row.size = linelen;
+    E.row.chars = malloc(linelen + 1);
+    memcpy(E.row.chars, line, linelen);
+    E.row.chars[linelen] = '\0';
+    E.numrows = 1;
+}
+
 void editorRefreshScreen() {
     abuf buffer = ABUF_INIT;
     char buf[32];
@@ -177,23 +230,30 @@ void editorRefreshScreen() {
 }
 void editorDrawRows(abuf *buffer) {
     for (int i = 0; i < E.screenRows; i++) {
-        if (i == E.screenRows / 3) {
-            char welcome[80];
-            int welcomelen =
-                snprintf(welcome, sizeof(welcome), "Kilo Editor -- version %s",
-                         KILO_VERSION);
-            if (welcomelen > E.screenColumns)
-                welcomelen = E.screenColumns;
-            int padding = (E.screenColumns - welcomelen) / 2;
-            if (padding) {
+        if (i >= E.numrows) {
+            if (i == E.screenRows / 3) {
+                char welcome[80];
+                int welcomelen =
+                    snprintf(welcome, sizeof(welcome),
+                             "Kilo Editor -- version %s", KILO_VERSION);
+                if (welcomelen > E.screenColumns)
+                    welcomelen = E.screenColumns;
+                int padding = (E.screenColumns - welcomelen) / 2;
+                if (padding) {
+                    abAppend(buffer, "~", 1);
+                    padding--;
+                }
+                while (padding--)
+                    abAppend(buffer, " ", 1);
+                abAppend(buffer, welcome, welcomelen);
+            } else {
                 abAppend(buffer, "~", 1);
-                padding--;
             }
-            while (padding--)
-                abAppend(buffer, " ", 1);
-            abAppend(buffer, welcome, welcomelen);
         } else {
-            abAppend(buffer, "~", 1);
+            int len = E.row.size;
+            if (len > E.screenColumns)
+                len = E.screenColumns;
+            abAppend(buffer, E.row.chars, len);
         }
         abAppend(buffer, "\x1b[K", 3);
         if (i < E.screenRows - 1)
@@ -218,6 +278,7 @@ int getWindowSize(int *rows, int *column) {
 void initEditor() {
     E.cursorX = 0;
     E.cursorY = 0;
+    E.numrows = 0;
 
     if (getWindowSize(&E.screenRows, &E.screenColumns) == -1)
         die("getWindowSize");
