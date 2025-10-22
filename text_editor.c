@@ -14,18 +14,22 @@
 #include <unistd.h>
 
 #define KILO_VERSION "0.0.1"
+#define KILO_TAB_STOP 8
 #define CTRL_KEY(k) ((k) & 0x1f)
 
 // TODO: Moving left at the start of a line
 
 typedef struct erow {
     int size;
+    int rsize;
     char *chars;
+    char *render;
 } erow;
 
 typedef struct editorConfig {
     int cursorX, cursorY;
     int screenRows;
+    int rx;
     int screenColumns;
     int rowoff;
     int coloff;
@@ -55,6 +59,8 @@ enum editorKey {
 
 editorConfig E;
 
+// FUNCTIONS
+
 void die(const char *function_name);
 void enableRawMode();
 void disableRawMode();
@@ -71,6 +77,8 @@ void editorMoveCursor(int key);
 void editorOpen(char *filename);
 void editorAppendRow(char *str, size_t len);
 void editorScroll();
+void editorUpdateRow(erow *row);
+int editorRowCxToRx(erow *row, int cursorX);
 
 int main(int argc, char *argv[]) {
     enableRawMode();
@@ -238,7 +246,7 @@ void editorRefreshScreen() {
     abAppend(&buffer, "\x1b[H", 3);
     editorDrawRows(&buffer);
     snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (E.cursorY - E.rowoff) + 1,
-             (E.cursorX - E.coloff) + 1);
+             (E.rx - E.coloff) + 1);
     abAppend(&buffer, buf, strlen(buf));
     abAppend(&buffer, "\x1b[?25h", 6);
     write(STDOUT_FILENO, buffer.b, buffer.len);
@@ -267,12 +275,12 @@ void editorDrawRows(abuf *buffer) {
                 abAppend(buffer, "~", 1);
             }
         } else {
-            int len = E.row[filerow].size - E.coloff;
+            int len = E.row[filerow].rsize - E.coloff;
             if (len < 0)
                 len = 0;
             if (len > E.screenColumns)
                 len = E.screenColumns;
-            abAppend(buffer, &E.row[filerow].chars[E.coloff], len);
+            abAppend(buffer, &E.row[filerow].render[E.coloff], len);
         }
         abAppend(buffer, "\x1b[K", 3);
         if (i < E.screenRows - 1)
@@ -297,6 +305,7 @@ int getWindowSize(int *rows, int *column) {
 void initEditor() {
     E.cursorX = 0;
     E.cursorY = 0;
+    E.rx = 0;
     E.rowoff = 0;
     E.coloff = 0;
     E.numrows = 0;
@@ -352,10 +361,18 @@ void editorMoveCursor(int key) {
     case ARROW_LEFT:
         if (E.cursorX != 0)
             E.cursorX--;
+        else if (E.cursorY > 0) {
+            E.cursorY--;
+            E.cursorX = E.row[E.cursorY].size;
+        }
         break;
     case ARROW_RIGHT:
         if (row && E.cursorX < row->size)
             E.cursorX++;
+        else if (E.cursorY > 0) {
+            E.cursorY--;
+            E.cursorX = E.row[E.cursorY].size;
+        }
         break;
     }
     row = (E.cursorY >= E.numrows) ? NULL : &E.row[E.cursorY];
@@ -370,20 +387,56 @@ void editorAppendRow(char *str, size_t len) {
     E.row[at].chars = malloc(len + 1);
     memcpy(E.row[at].chars, str, len);
     E.row[at].chars[len] = '\0';
+    E.row[at].rsize = 0;
+    E.row[at].render = NULL;
+    editorUpdateRow(&E.row[at]);
     E.numrows++;
 }
 
 void editorScroll() {
-    if (E.cursorX < E.coloff) {
-        E.coloff = E.cursorX;
+    E.rx = 0;
+    if (E.cursorY < E.numrows)
+        E.rx = editorRowCxToRx(&E.row[E.cursorY], E.cursorX);
+    if (E.rx < E.coloff) {
+        E.coloff = E.rx;
     }
     if (E.cursorY < E.rowoff) {
         E.rowoff = E.cursorY;
     }
-    if (E.cursorX >= E.coloff + E.screenColumns) {
-        E.coloff = E.cursorX - E.screenColumns + 1;
+    if (E.rx >= E.coloff + E.screenColumns) {
+        E.coloff = E.rx - E.screenColumns + 1;
     }
     if (E.cursorY >= E.rowoff + E.screenRows) {
         E.rowoff = E.cursorY - E.screenRows + 1;
     }
+}
+void editorUpdateRow(erow *row) {
+    int tabs = 0;
+    for (int j = 0; j < row->size; j++) {
+        if (row->chars[j] == '\t')
+            tabs++;
+    }
+    free(row->render);
+    row->render = malloc(row->size + tabs * (KILO_TAB_STOP - 1) + 1);
+    int idx = 0;
+    for (int j = 0; j < row->size; j++) {
+        if (row->chars[j] == '\t') {
+            row->render[idx++] = ' ';
+            while (idx % KILO_TAB_STOP != 0)
+                row->render[idx++] = ' ';
+        } else
+            row->render[idx++] = row->chars[j];
+    }
+    row->render[idx] = '\0';
+    row->rsize = idx;
+}
+
+int editorRowCxToRx(erow *row, int cursorX) {
+    int rx = 0;
+    for (int j = 0; j < cursorX; j++) {
+        if (row->chars[j] == '\t')
+            rx += (KILO_TAB_STOP - 1) - (rx % KILO_TAB_STOP);
+        rx++;
+    }
+    return rx;
 }
