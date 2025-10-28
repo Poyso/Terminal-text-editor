@@ -4,6 +4,7 @@
 
 #include <asm-generic/errno-base.h>
 #include <asm-generic/ioctls.h>
+#include <fcntl.h>
 // #include <ctype.h>
 #include <errno.h>
 #include <stdarg.h>
@@ -19,7 +20,7 @@
 #define KILO_TAB_STOP 8
 #define CTRL_KEY(k) ((k) & 0x1f)
 
-// TODO: Status bar
+// TODO: Dirty flags
 
 typedef struct erow {
     int size;
@@ -49,6 +50,8 @@ typedef struct abuf {
 } abuf;
 
 enum editorKey {
+    BACKSPACE = 127,
+    DEL_KEY,
     ARROW_LEFT = 1000,
     ARROW_RIGHT,
     ARROW_UP,
@@ -87,6 +90,10 @@ void editorUpdateRow(erow *row);
 int editorRowCxToRx(erow *row, int cursorX);
 void editorSetStatusMessage(const char *fmt, ...);
 void editorDrawStatusMessage(abuf *buffer);
+void editorRowInsertChar(erow *row, int at, int c);
+void editorInsertChar(int c);
+char *editorRowsToString(int *buflen);
+void editorSave();
 
 int main(int argc, char *argv[]) {
     enableRawMode();
@@ -95,7 +102,7 @@ int main(int argc, char *argv[]) {
         editorOpen(argv[1]);
     }
 
-    editorSetStatusMessage("HELP: Ctrl-Q = quit");
+    editorSetStatusMessage("HELP: Ctrl-Q = quit | Ctrl-S = save");
     while (1) {
         editorRefreshScreen();
         editorProcessKeyPress();
@@ -201,10 +208,22 @@ void editorProcessKeyPress() {
     int c = editorKeyRead();
 
     switch (c) {
+    case '\r':
+        break;
+    case DEL_KEY:
+    case BACKSPACE:
+    case CTRL('h'):
+        break;
     case CTRL_KEY('q'):
         write(STDOUT_FILENO, "\x1b[2J", 4);
         write(STDOUT_FILENO, "\x1b[H", 3);
         exit(0);
+        break;
+    case CTRL('l'):
+    case '\x1b':
+        break;
+    case CTRL('s'):
+        editorSave();
         break;
     case END:
         if (E.cursorY < E.numrows)
@@ -232,6 +251,9 @@ void editorProcessKeyPress() {
     case ARROW_UP:
     case ARROW_LEFT:
         editorMoveCursor(c);
+        break;
+    default:
+        editorInsertChar(c);
         break;
     }
 }
@@ -504,4 +526,59 @@ void editorDrawStatusMessage(abuf *buffer) {
         msglen = E.screenColumns;
     if (msglen && time(NULL) - E.statusmsg_time < 5)
         abAppend(buffer, E.statusmsg, msglen);
+}
+
+void editorRowInsertChar(erow *row, int at, int c) {
+    if (at < 0 || at > row->size)
+        at = row->size;
+    row->chars = realloc(row->chars, row->size + 2);
+    memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
+    row->size++;
+    row->chars[at] = c;
+    editorUpdateRow(row);
+}
+
+void editorInsertChar(int c) {
+    if (E.cursorY == E.numrows) {
+        editorAppendRow("", 0);
+    }
+    editorRowInsertChar(&E.row[E.cursorY], E.cursorX, c);
+    E.cursorX++;
+}
+
+char *editorRowsToString(int *buflen) {
+    int totlen = 0;
+    for (int i = 0; i < E.numrows; i++) {
+        totlen += E.row[i].size + 1;
+    }
+    *buflen = totlen;
+    char *buf = malloc(totlen);
+    char *p = buf;
+    for (int i = 0; i < E.numrows; i++) {
+        memcpy(p, E.row[i].chars, E.row[i].size);
+        p += E.row[i].size;
+        *p = '\n';
+        p++;
+    }
+    return buf;
+}
+void editorSave() {
+    if (E.filename == NULL)
+        return;
+    int len;
+    char *buf = editorRowsToString(&len);
+    int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
+    if (fd != -1) {
+        if (ftruncate(fd, len) != -1) {
+            if (write(fd, buf, len) == len) {
+                close(fd);
+                free(buf);
+                editorSetStatusMessage("%d bytes written on disk", len);
+                return;
+            }
+        }
+        close(fd);
+    }
+    free(buf);
+    editorSetStatusMessage("Cant save! I/O error", strerror(errno));
 }
