@@ -17,7 +17,7 @@
 #define KILO_TAB_STOP 8
 #define CTRL_KEY(k) ((k) & 0x1f)
 
-// TODO: Moving left at the start of a line
+// TODO: Status bar
 
 typedef struct erow {
     int size;
@@ -197,13 +197,21 @@ void editorProcessKeyPress() {
         exit(0);
         break;
     case END:
-        E.cursorX = E.screenColumns - 1;
+        if (E.cursorY < E.numrows)
+            E.cursorX = E.row[E.cursorY].size;
         break;
     case HOME:
         E.cursorX = 0;
         break;
     case PAGE_UP:
     case PAGE_DOWN: {
+        if (c == PAGE_UP) {
+            E.cursorY = E.rowoff;
+        } else if (c == PAGE_DOWN) {
+            E.cursorY = E.rowoff + E.screenColumns - 1;
+            if (E.cursorY < E.numrows)
+                E.cursorY = E.numrows;
+        }
         int times = E.screenRows;
         while (times--)
             editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
