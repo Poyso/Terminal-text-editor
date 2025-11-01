@@ -36,6 +36,7 @@ typedef struct editorConfig {
     int screenColumns;
     int rowoff;
     int coloff;
+    int dirty;
     struct termios orig_termios;
     int numrows;
     erow *row;
@@ -277,6 +278,7 @@ void editorOpen(char *filename) {
     }
     free(line);
     fclose(fp);
+    E.dirty = 0;
 }
 
 void editorRefreshScreen() {
@@ -353,6 +355,7 @@ void initEditor() {
     E.coloff = 0;
     E.numrows = 0;
     E.row = NULL;
+    E.dirty = 0;
     E.filename = NULL;
     E.statusmsg[0] = '\0';
     E.statusmsg_time = 0;
@@ -438,6 +441,7 @@ void editorAppendRow(char *str, size_t len) {
     E.row[at].render = NULL;
     editorUpdateRow(&E.row[at]);
     E.numrows++;
+    E.dirty++;
 }
 
 void editorScroll() {
@@ -493,8 +497,9 @@ void editorDrawStatusBar(abuf *buffer) {
     char status[80], rstatus[80];
     int rlen =
         snprintf(rstatus, sizeof(rstatus), "%d/%d", E.cursorY + 1, E.numrows);
-    int len = snprintf(status, sizeof(status), "%.20s - %d Lines",
-                       E.filename ? E.filename : "[No Name]", E.numrows);
+    int len = snprintf(status, sizeof(status), "%.20s - %d Lines %s",
+                       E.filename ? E.filename : "[No Name]", E.numrows,
+                       E.dirty ? "(modified)" : " ");
     if (len > E.screenColumns)
         len = E.screenColumns;
     abAppend(buffer, status, len);
@@ -536,6 +541,7 @@ void editorRowInsertChar(erow *row, int at, int c) {
     row->size++;
     row->chars[at] = c;
     editorUpdateRow(row);
+    E.dirty++;
 }
 
 void editorInsertChar(int c) {
@@ -573,6 +579,7 @@ void editorSave() {
             if (write(fd, buf, len) == len) {
                 close(fd);
                 free(buf);
+                E.dirty = 0;
                 editorSetStatusMessage("%d bytes written on disk", len);
                 return;
             }
