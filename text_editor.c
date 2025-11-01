@@ -18,6 +18,7 @@
 
 #define KILO_VERSION "0.0.1"
 #define KILO_TAB_STOP 8
+#define KILO_QUIT_TIMES 3
 #define CTRL_KEY(k) ((k) & 0x1f)
 
 // TODO: Dirty flags
@@ -95,6 +96,8 @@ void editorRowInsertChar(erow *row, int at, int c);
 void editorInsertChar(int c);
 char *editorRowsToString(int *buflen);
 void editorSave();
+void editorDelChar();
+void editorRowDelChar(erow *row, int at);
 
 int main(int argc, char *argv[]) {
     enableRawMode();
@@ -206,6 +209,7 @@ int editorKeyRead() {
     }
 }
 void editorProcessKeyPress() {
+    static int quit_times = KILO_QUIT_TIMES;
     int c = editorKeyRead();
 
     switch (c) {
@@ -214,8 +218,18 @@ void editorProcessKeyPress() {
     case DEL_KEY:
     case BACKSPACE:
     case CTRL('h'):
+        if (c == DEL_KEY)
+            editorMoveCursor(ARROW_RIGHT);
+        editorDelChar();
         break;
     case CTRL_KEY('q'):
+        if (E.dirty && quit_times > 0) {
+            editorSetStatusMessage(
+                "WARNING!!! File is unsaved use Ctrl-Q: %d times to quit",
+                quit_times);
+            quit_times--;
+            return;
+        }
         write(STDOUT_FILENO, "\x1b[2J", 4);
         write(STDOUT_FILENO, "\x1b[H", 3);
         exit(0);
@@ -257,6 +271,7 @@ void editorProcessKeyPress() {
         editorInsertChar(c);
         break;
     }
+    quit_times = KILO_QUIT_TIMES;
 }
 
 void editorOpen(char *filename) {
@@ -588,4 +603,22 @@ void editorSave() {
     }
     free(buf);
     editorSetStatusMessage("Cant save! I/O error", strerror(errno));
+}
+
+void editorDelChar() {
+    if (E.cursorY == E.numrows)
+        return;
+    erow *row = &E.row[E.cursorY];
+    if (E.cursorX > 0) {
+        editorRowDelChar(row, E.cursorX - 1);
+        E.cursorX--;
+    }
+}
+void editorRowDelChar(erow *row, int at) {
+    if (at < 0 || at > E.row->size)
+        return;
+    memmove(&row->chars[at], &row->chars[at + 1], row->size - at);
+    row->size--;
+    editorUpdateRow(row);
+    E.dirty++;
 }
