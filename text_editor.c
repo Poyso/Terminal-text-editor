@@ -86,7 +86,7 @@ void abAppend(abuf *buffer, const char *string, int len);
 void abFree(abuf *buffer);
 void editorMoveCursor(int key);
 void editorOpen(char *filename);
-void editorAppendRow(char *str, size_t len);
+void editorInsertRow(int at, char *str, size_t len);
 void editorScroll();
 void editorUpdateRow(erow *row);
 int editorRowCxToRx(erow *row, int cursorX);
@@ -101,6 +101,7 @@ void editorRowDelChar(erow *row, int at);
 void editorFreeRow(erow *row);
 void editorDelRow(int at);
 void editorRowAppendString(erow *row, char *s, size_t len);
+void editorInsertNewLine();
 
 int main(int argc, char *argv[]) {
     enableRawMode();
@@ -217,6 +218,7 @@ void editorProcessKeyPress() {
 
     switch (c) {
     case '\r':
+        editorInsertNewLine();
         break;
     case DEL_KEY:
     case BACKSPACE:
@@ -291,7 +293,7 @@ void editorOpen(char *filename) {
             while (linelen > 0 &&
                    (line[linelen - 1] == '\n' || line[linelen - 1] == '\r'))
                 linelen--;
-            editorAppendRow(line, linelen);
+            editorInsertRow(E.numrows, line, linelen);
         }
     }
     free(line);
@@ -448,9 +450,12 @@ void editorMoveCursor(int key) {
     if (E.cursorX > rowlen)
         E.cursorX = rowlen;
 }
-void editorAppendRow(char *str, size_t len) {
+void editorInsertRow(int at, char *str, size_t len) {
+    if (at < 0 || E.numrows < at)
+        return;
+
     E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1));
-    int at = E.numrows;
+    memmove(&E.row[at + 1], &E.row[at], sizeof(erow) * (E.numrows - at));
     E.row[at].size = len;
     E.row[at].chars = malloc(len + 1);
     memcpy(E.row[at].chars, str, len);
@@ -564,7 +569,7 @@ void editorRowInsertChar(erow *row, int at, int c) {
 
 void editorInsertChar(int c) {
     if (E.cursorY == E.numrows) {
-        editorAppendRow("", 0);
+        editorInsertRow(E.numrows, "", 0);
     }
     editorRowInsertChar(&E.row[E.cursorY], E.cursorX, c);
     E.cursorX++;
@@ -652,4 +657,19 @@ void editorRowAppendString(erow *row, char *s, size_t len) {
     row->chars[row->size] = '\0';
     editorUpdateRow(row);
     E.dirty++;
+}
+void editorInsertNewLine() {
+    if (E.cursorX == 0) {
+        editorInsertRow(E.cursorY, "", 0);
+    } else {
+        erow *row = &E.row[E.cursorY];
+        editorInsertRow(E.cursorY + 1, &row->chars[E.cursorX],
+                        row->size - E.cursorX);
+        row = &E.row[E.cursorY];
+        row->size = E.cursorX;
+        row->chars[row->size] = '\0';
+        editorUpdateRow(row);
+    }
+    E.cursorY++;
+    E.cursorX = 0;
 }
