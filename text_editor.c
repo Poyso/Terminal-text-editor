@@ -21,7 +21,7 @@
 #define KILO_QUIT_TIMES 3
 #define CTRL_KEY(k) ((k) & 0x1f)
 
-// TODO: Dirty flags
+// TODO:
 
 typedef struct erow {
     int size;
@@ -98,6 +98,9 @@ char *editorRowsToString(int *buflen);
 void editorSave();
 void editorDelChar();
 void editorRowDelChar(erow *row, int at);
+void editorFreeRow(erow *row);
+void editorDelRow(int at);
+void editorRowAppendString(erow *row, char *s, size_t len);
 
 int main(int argc, char *argv[]) {
     enableRawMode();
@@ -608,10 +611,17 @@ void editorSave() {
 void editorDelChar() {
     if (E.cursorY == E.numrows)
         return;
+    if (E.cursorX == 0 && E.cursorY == 0)
+        return;
     erow *row = &E.row[E.cursorY];
     if (E.cursorX > 0) {
         editorRowDelChar(row, E.cursorX - 1);
         E.cursorX--;
+    } else {
+        E.cursorX = E.row[E.cursorY - 1].size;
+        editorRowAppendString(&E.row[E.cursorY - 1], row->chars, row->size);
+        editorDelRow(E.cursorY);
+        E.cursorY--;
     }
 }
 void editorRowDelChar(erow *row, int at) {
@@ -619,6 +629,27 @@ void editorRowDelChar(erow *row, int at) {
         return;
     memmove(&row->chars[at], &row->chars[at + 1], row->size - at);
     row->size--;
+    editorUpdateRow(row);
+    E.dirty++;
+}
+
+void editorFreeRow(erow *row) {
+    free(row->chars);
+    free(row->render);
+}
+void editorDelRow(int at) {
+    if (at < 0 || at >= E.numrows)
+        return;
+    editorFreeRow(&E.row[at]);
+    memmove(&E.row[at], &E.row[at + 1], sizeof(erow) * (E.numrows - at - 1));
+    E.numrows--;
+    E.dirty++;
+}
+void editorRowAppendString(erow *row, char *s, size_t len) {
+    row->chars = realloc(row->chars, row->size + len + 1);
+    memcpy(&row->chars[row->size], s, len);
+    row->size += len;
+    row->chars[row->size] = '\0';
     editorUpdateRow(row);
     E.dirty++;
 }
