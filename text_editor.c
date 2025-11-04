@@ -21,7 +21,7 @@
 #define KILO_QUIT_TIMES 3
 #define CTRL_KEY(k) ((k) & 0x1f)
 
-// TODO:
+// TODO: Incremental search
 
 typedef struct erow {
     int size;
