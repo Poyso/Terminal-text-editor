@@ -4,9 +4,9 @@
 
 #include <asm-generic/errno-base.h>
 #include <asm-generic/ioctls.h>
-#include <fcntl.h>
-// #include <ctype.h>
+#include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -90,6 +90,7 @@ void editorInsertRow(int at, char *str, size_t len);
 void editorScroll();
 void editorUpdateRow(erow *row);
 int editorRowCxToRx(erow *row, int cursorX);
+int editorRowRxToCx(erow *row, int rx);
 void editorSetStatusMessage(const char *fmt, ...);
 void editorDrawStatusMessage(abuf *buffer);
 void editorRowInsertChar(erow *row, int at, int c);
@@ -102,6 +103,8 @@ void editorFreeRow(erow *row);
 void editorDelRow(int at);
 void editorRowAppendString(erow *row, char *s, size_t len);
 void editorInsertNewLine();
+char *editorPrompt(char *prompt);
+void editorFind();
 
 int main(int argc, char *argv[]) {
     enableRawMode();
@@ -110,7 +113,8 @@ int main(int argc, char *argv[]) {
         editorOpen(argv[1]);
     }
 
-    editorSetStatusMessage("HELP: Ctrl-Q = quit | Ctrl-S = save");
+    editorSetStatusMessage(
+        "HELP: Ctrl-Q = quit | Ctrl-S = save | Ctrl-f = find");
     while (1) {
         editorRefreshScreen();
         editorProcessKeyPress();
@@ -271,6 +275,9 @@ void editorProcessKeyPress() {
     case ARROW_UP:
     case ARROW_LEFT:
         editorMoveCursor(c);
+        break;
+    case CTRL('f'):
+        editorFind();
         break;
     default:
         editorInsertChar(c);
@@ -592,8 +599,13 @@ char *editorRowsToString(int *buflen) {
     return buf;
 }
 void editorSave() {
-    if (E.filename == NULL)
-        return;
+    if (E.filename == NULL) {
+        E.filename = editorPrompt("Save as: %s");
+        if (E.filename == NULL) {
+            editorSetStatusMessage("Save aborted");
+            return;
+        }
+    }
     int len;
     char *buf = editorRowsToString(&len);
     int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
@@ -672,4 +684,65 @@ void editorInsertNewLine() {
     }
     E.cursorY++;
     E.cursorX = 0;
+}
+
+char *editorPrompt(char *prompt) {
+    size_t bufsize = 128;
+    char *buf = malloc(bufsize);
+    size_t buflen = 0;
+    buf[0] = '\0';
+    while (1) {
+        editorSetStatusMessage(prompt, buf);
+        editorRefreshScreen();
+        int c = editorKeyRead();
+        if (c == DEL_KEY || c == BACKSPACE || c == CTRL('h')) {
+            if (buflen != 0)
+                buf[--buflen] = '\0';
+        } else if (c == '\x1b') {
+            editorSetStatusMessage("");
+            free(buf);
+            return NULL;
+        } else if (c == '\r') {
+            if (buflen != 0) {
+                editorSetStatusMessage("");
+                return buf;
+            }
+        } else if (!iscntrl(c) && c < 128) {
+            if (buflen == bufsize - 1) {
+                bufsize *= 2;
+                buf = realloc(buf, bufsize);
+            }
+            buf[buflen++] = c;
+            buf[buflen] = '\0';
+        }
+    }
+}
+
+void editorFind() {
+    char *query = editorPrompt("Find: %s");
+    if (query == NULL)
+        return;
+    for (int i = 0; i < E.numrows; i++) {
+        erow *row = &E.row[i];
+        char *match = strstr(row->chars, query);
+        if (match) {
+            E.cursorY = i;
+            E.cursorX = editorRowRxToCx(row, match - row->render);
+            E.rowoff = E.numrows;
+            break;
+        }
+    }
+}
+
+int editorRowRxToCx(erow *row, int rx) {
+    int cur_rx = 0;
+    int cursorX;
+    for (cursorX = 0; cursorX < row->size; cursorX++) {
+        if (row->chars[cursorX] == '\t')
+            cur_rx += (KILO_TAB_STOP - 1) - (cur_rx % KILO_TAB_STOP);
+        cur_rx++;
+        if (cur_rx > rx)
+            return cursorX;
+    }
+    return cursorX;
 }
