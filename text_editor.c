@@ -103,8 +103,9 @@ void editorFreeRow(erow *row);
 void editorDelRow(int at);
 void editorRowAppendString(erow *row, char *s, size_t len);
 void editorInsertNewLine();
-char *editorPrompt(char *prompt);
+char *editorPrompt(char *prompt, void (*callback)(char *, int));
 void editorFind();
+void editorFindCallback(char *query, int key);
 
 int main(int argc, char *argv[]) {
     enableRawMode();
@@ -600,7 +601,7 @@ char *editorRowsToString(int *buflen) {
 }
 void editorSave() {
     if (E.filename == NULL) {
-        E.filename = editorPrompt("Save as: %s");
+        E.filename = editorPrompt("Save as: %s", NULL);
         if (E.filename == NULL) {
             editorSetStatusMessage("Save aborted");
             return;
@@ -686,7 +687,7 @@ void editorInsertNewLine() {
     E.cursorX = 0;
 }
 
-char *editorPrompt(char *prompt) {
+char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
     size_t bufsize = 128;
     char *buf = malloc(bufsize);
     size_t buflen = 0;
@@ -700,11 +701,15 @@ char *editorPrompt(char *prompt) {
                 buf[--buflen] = '\0';
         } else if (c == '\x1b') {
             editorSetStatusMessage("");
+            if (callback)
+                callback(buf, c);
             free(buf);
             return NULL;
         } else if (c == '\r') {
             if (buflen != 0) {
                 editorSetStatusMessage("");
+                if (callback)
+                    callback(buf, c);
                 return buf;
             }
         } else if (!iscntrl(c) && c < 128) {
@@ -715,12 +720,13 @@ char *editorPrompt(char *prompt) {
             buf[buflen++] = c;
             buf[buflen] = '\0';
         }
+        if (callback)
+            callback(buf, c);
     }
 }
 
-void editorFind() {
-    char *query = editorPrompt("Find: %s");
-    if (query == NULL)
+void editorFindCallback(char *query, int key) {
+    if (key == '\x1b' || key == '\r')
         return;
     for (int i = 0; i < E.numrows; i++) {
         erow *row = &E.row[i];
@@ -732,6 +738,12 @@ void editorFind() {
             break;
         }
     }
+}
+
+void editorFind() {
+    char *query = editorPrompt("Find: %s", editorFindCallback);
+    if (query)
+        free(query);
 }
 
 int editorRowRxToCx(erow *row, int rx) {
