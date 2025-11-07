@@ -21,8 +21,6 @@
 #define KILO_QUIT_TIMES 3
 #define CTRL_KEY(k) ((k) & 0x1f)
 
-// TODO: Incremental search
-
 typedef struct erow {
     int size;
     int rsize;
@@ -726,13 +724,34 @@ char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
 }
 
 void editorFindCallback(char *query, int key) {
-    if (key == '\x1b' || key == '\r')
+    static int last_match = -1;
+    static int direction = 1;
+    if (key == '\x1b' || key == '\r') {
+        last_match = -1;
+        direction = -1;
         return;
+    } else if (key == ARROW_RIGHT || key == ARROW_DOWN) {
+        direction = 1;
+    } else if (key == ARROW_LEFT || key == ARROW_UP) {
+        direction = -1;
+    } else {
+        direction = 1;
+        last_match = -1;
+    }
+    if (last_match == -1)
+        direction = 1;
+    int current = last_match;
     for (int i = 0; i < E.numrows; i++) {
-        erow *row = &E.row[i];
+        current += direction;
+        if (current == -1)
+            current = E.numrows - 1;
+        else if (current == E.numrows)
+            current = 0;
+        erow *row = &E.row[current];
         char *match = strstr(row->chars, query);
         if (match) {
-            E.cursorY = i;
+            last_match = current;
+            E.cursorY = current;
             E.cursorX = editorRowRxToCx(row, match - row->render);
             E.rowoff = E.numrows;
             break;
@@ -741,9 +760,20 @@ void editorFindCallback(char *query, int key) {
 }
 
 void editorFind() {
-    char *query = editorPrompt("Find: %s", editorFindCallback);
+    int saved_cursorX = E.cursorX;
+    int saved_cursorY = E.cursorY;
+    int saved_coloff = E.coloff;
+    int saved_rowoff = E.rowoff;
+    char *query =
+        editorPrompt("Find: %s (Use ESC/Arrows/Enter)", editorFindCallback);
     if (query)
         free(query);
+    else {
+        E.cursorX = saved_cursorX;
+        E.cursorY = saved_cursorY;
+        E.coloff = saved_coloff;
+        E.rowoff = saved_rowoff;
+    }
 }
 
 int editorRowRxToCx(erow *row, int rx) {
