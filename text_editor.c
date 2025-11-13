@@ -69,6 +69,7 @@ enum editorKey {
 enum editorHighlight {
     HL_NORMAL = 0,
     HL_NUMBER,
+    HL_MATCH,
 };
 
 #define ABUF_INIT {NULL, 0}
@@ -113,7 +114,7 @@ char *editorPrompt(char *prompt, void (*callback)(char *, int));
 void editorFind();
 void editorFindCallback(char *query, int key);
 void editorUpdateSyntax(erow *row);
-int editorSynatxToColor(int hl);
+int editorSyntaxToColor(int hl);
 
 int main(int argc, char *argv[]) {
     enableRawMode();
@@ -374,7 +375,7 @@ void editorDrawRows(abuf *buffer) {
                     abAppend(buffer, "\x1b[39m", 5);
                     abAppend(buffer, &c[i], 1);
                 } else {
-                    int color = editorSynatxToColor(hl[i]);
+                    int color = editorSyntaxToColor(hl[i]);
                     if (color != current_color) {
                         current_color = color;
                         char buf[16];
@@ -789,7 +790,7 @@ void editorFindCallback(char *query, int key) {
             last_match = current;
             E.cursorY = current;
             E.cursorX = editorRowRxToCx(row, match - row->render);
-            E.rowoff = E.numrows;
+            memset(&row->hl[match - row->render], HL_MATCH, strlen(query));
             break;
         }
     }
@@ -835,10 +836,12 @@ void editorUpdateSyntax(erow *row) {
     }
 }
 
-int editorSynatxToColor(int hl) {
+int editorSyntaxToColor(int hl) {
     switch (hl) {
     case HL_NUMBER:
         return 31;
+    case HL_MATCH:
+        return 34;
     default:
         return 37;
     };
