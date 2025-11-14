@@ -66,11 +66,7 @@ enum editorKey {
     PAGE_DOWN,
 };
 
-enum editorHighlight {
-    HL_NORMAL = 0,
-    HL_NUMBER,
-    HL_MATCH,
-};
+enum editorHighlight { HL_NORMAL = 0, HL_NUMBER = 1, HL_MATCH };
 
 #define ABUF_INIT {NULL, 0}
 
@@ -115,6 +111,7 @@ void editorFind();
 void editorFindCallback(char *query, int key);
 void editorUpdateSyntax(erow *row);
 int editorSyntaxToColor(int hl);
+int is_separator(int c);
 
 int main(int argc, char *argv[]) {
     enableRawMode();
@@ -372,13 +369,12 @@ void editorDrawRows(abuf *buffer) {
                         abAppend(buffer, "\x1b[39m", 5);
                         current_color = -1;
                     }
-                    abAppend(buffer, "\x1b[39m", 5);
                     abAppend(buffer, &c[i], 1);
                 } else {
                     int color = editorSyntaxToColor(hl[i]);
                     if (color != current_color) {
                         current_color = color;
-                        char buf[16];
+                        char buf[32];
                         int clen =
                             snprintf(buf, sizeof(buf), "\x1b[%dm", color);
                         abAppend(buffer, buf, clen);
@@ -763,6 +759,13 @@ char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
 void editorFindCallback(char *query, int key) {
     static int last_match = -1;
     static int direction = 1;
+    static int saved_hl_line;
+    static char *saved_hl = NULL;
+    if (saved_hl) {
+        memcpy(E.row[saved_hl_line].hl, saved_hl, E.row[saved_hl_line].rsize);
+        free(saved_hl);
+        saved_hl = NULL;
+    }
     if (key == '\x1b' || key == '\r') {
         last_match = -1;
         direction = -1;
@@ -790,6 +793,10 @@ void editorFindCallback(char *query, int key) {
             last_match = current;
             E.cursorY = current;
             E.cursorX = editorRowRxToCx(row, match - row->render);
+            E.rowoff = E.numrows;
+            saved_hl_line = current;
+            saved_hl = malloc(row->rsize);
+            memcpy(saved_hl, row->hl, row->rsize);
             memset(&row->hl[match - row->render], HL_MATCH, strlen(query));
             break;
         }
@@ -827,22 +834,36 @@ int editorRowRxToCx(erow *row, int rx) {
 }
 
 void editorUpdateSyntax(erow *row) {
-    row->hl = realloc(row->hl, row->size);
-    memset(row->hl, HL_NORMAL, row->size);
-    for (int i = 0; i < row->size; i++) {
-        if (isdigit(row->render[i])) {
+    row->hl = realloc(row->hl, row->rsize);
+    memset(row->hl, HL_NORMAL, row->rsize);
+    int prev_sep = 1;
+    int i = 0;
+    while (i < row->rsize) {
+        char c = row->render[i];
+        unsigned char prev_hl = (i > 0) ? row->hl[i - 1] : HL_NORMAL;
+        if ((isdigit(c) && (prev_sep || prev_hl == HL_NUMBER)) ||
+            (c == '.' && prev_hl == HL_NUMBER)) {
             row->hl[i] = HL_NUMBER;
+            i++;
+            prev_sep = 0;
+            continue;
         }
+        prev_sep = is_separator(c);
+        i++;
     }
 }
 
 int editorSyntaxToColor(int hl) {
     switch (hl) {
     case HL_NUMBER:
-        return 31;
-    case HL_MATCH:
         return 34;
+    case HL_MATCH:
+        return 31;
     default:
         return 37;
     };
+}
+
+int is_separator(int c) {
+    return isspace(c) || c == '\0' || strchr(",.()+-/*=~%<>[];", c) == NULL;
 }
